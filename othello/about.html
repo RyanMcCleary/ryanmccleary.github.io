@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Othello — About</title>
+<link rel="icon" href="favicon.ico">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <img src="logo.png" alt="">
+    <span class="brand">The Othello Corner</span>
+    <nav aria-label="Main">
+      <ul class="navbar">
+        <li><a href="index.html">Play</a></li>
+        <li><a href="rules.html">Rules &amp; History</a></li>
+        <li><a href="about.html" class="active" aria-current="page">About</a></li>
+        <li><a href="settings.html">Settings</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <article class="content">
+      <h1>About this engine</h1>
+      <img src="othello-corner.jpg" alt="Close-up of an Othello board corner">
+      <p>This opponent is a from-scratch Othello engine written in C and compiled to
+      WebAssembly. It plays using <strong>classical game-tree search</strong> — no
+      machine learning, no neural networks, no training data.</p>
+
+      <h2>How it thinks</h2>
+      <ul>
+        <li><strong>Bitboards</strong> — the position is two 64-bit integers; moves and
+        flips are computed with branchless Kogge-Stone bit tricks.</li>
+        <li><strong>Principal Variation Search</strong> (alpha-beta with null-window
+        scouting) plus a <strong>transposition table</strong> and move ordering.</li>
+        <li><strong>Iterative deepening</strong> with a time budget, so it stays
+        responsive — the difficulty setting simply gives it more thinking time.</li>
+        <li>An <strong>exact endgame solver</strong> that plays the last several moves
+        perfectly.</li>
+        <li>A hand-crafted, phase-blended <strong>evaluation</strong> — mobility,
+        corners, edge stability, and disc count, weighted differently from the opening to
+        the endgame.</li>
+      </ul>
+
+      <h2>Runs anywhere</h2>
+      <p>The whole engine is an ~8&nbsp;KB WebAssembly module that runs in a background
+      Web Worker, so it works offline on a modest phone or tablet without ever blocking
+      the page.</p>
+    </article>
+  </main>
+</body>
+</html>

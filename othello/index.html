@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Othello — Play</title>
+<link rel="icon" href="favicon.ico">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <img src="logo.png" alt="">
+    <span class="brand">The Othello Corner</span>
+    <nav aria-label="Main">
+      <ul class="navbar">
+        <li><a href="index.html" class="active" aria-current="page">Play</a></li>
+        <li><a href="rules.html">Rules &amp; History</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="settings.html">Settings</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <div class="game">
+      <div>
+        <div class="board-wrap">
+          <div class="labels-top" aria-hidden="true">
+            <span>a</span><span>b</span><span>c</span><span>d</span>
+            <span>e</span><span>f</span><span>g</span><span>h</span>
+          </div>
+          <div class="labels-left" aria-hidden="true">
+            <span>1</span><span>2</span><span>3</span><span>4</span>
+            <span>5</span><span>6</span><span>7</span><span>8</span>
+          </div>
+          <div id="board" role="grid" aria-label="Othello board"></div>
+        </div>
+      </div>
+
+      <aside>
+        <div class="panel">
+          <div class="scores">
+            <div class="score" id="black-score">
+              <span class="pip black"></span>
+              <span><span class="num" id="black-num">2</span><br><span class="who">Black</span></span>
+            </div>
+            <div class="score" id="white-score">
+              <span class="pip white"></span>
+              <span><span class="num" id="white-num">2</span><br><span class="who">White</span></span>
+            </div>
+          </div>
+          <p id="status" role="status" aria-live="polite">Loading engine…</p>
+          <div class="banner" id="banner" role="status" aria-live="assertive" hidden></div>
+          <div class="btns">
+            <button id="undo">↶ Undo</button>
+            <button id="redo">Redo ↷</button>
+            <button id="hint">💡 Hint</button>
+            <button id="new-game" class="primary">New game</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="field">
+            <label for="level">Difficulty</label>
+            <select id="level"></select>
+          </div>
+          <div class="field">
+            <label for="color">You play</label>
+            <select id="color">
+              <option value="black">Black (first)</option>
+              <option value="white">White</option>
+              <option value="random">Random</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="who" style="margin-bottom:6px;color:var(--muted)">Moves</div>
+          <div class="moves" id="moves" aria-label="Move list"></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

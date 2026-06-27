@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Othello — Settings</title>
+<link rel="icon" href="favicon.ico">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <img src="logo.png" alt="">
+    <span class="brand">The Othello Corner</span>
+    <nav aria-label="Main">
+      <ul class="navbar">
+        <li><a href="index.html">Play</a></li>
+        <li><a href="rules.html">Rules &amp; History</a></li>
+        <li><a href="about.html">About</a></li>
+        <li><a href="settings.html" class="active" aria-current="page">Settings</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <article class="content" style="max-width:560px">
+      <h1>Settings</h1>
+      <p>These are saved in your browser and apply to your next new game.</p>
+
+      <div class="field">
+        <label for="set-level">Difficulty (engine think time)</label>
+        <select id="set-level"></select>
+      </div>
+      <div class="field">
+        <label for="set-color">You play as</label>
+        <select id="set-color">
+          <option value="black">Black (move first)</option>
+          <option value="white">White</option>
+          <option value="random">Random</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="set-hints">Show legal-move hints</label>
+        <input type="checkbox" id="set-hints">
+      </div>
+      <div class="field">
+        <label for="set-animate">Animate disc placement</label>
+        <input type="checkbox" id="set-animate">
+      </div>
+
+      <div class="btns" style="grid-template-columns:1fr 1fr;max-width:320px">
+        <button id="reset">Reset defaults</button>
+        <a href="index.html"><button class="primary" style="width:100%">Done</button></a>
+      </div>
+      <p id="saved" class="who" style="color:var(--accent);min-height:1.2em"></p>
+    </article>
+  </main>
+
+  <script type="module">
+    import { loadSettings, saveSettings, LEVELS } from './config.js';
+
+    const levelSel = document.getElementById('set-level');
+    const colorSel = document.getElementById('set-color');
+    const hints = document.getElementById('set-hints');
+    const animate = document.getElementById('set-animate');
+    const saved = document.getElementById('saved');
+
+    for (const [key, v] of Object.entries(LEVELS)) {
+      levelSel.add(new Option(`${v.label} (${v.timeMs} ms)`, key));
+    }
+
+    let s = loadSettings();
+    function fill() {
+      levelSel.value = s.level;
+      colorSel.value = s.color;
+      hints.checked = s.showHints;
+      animate.checked = s.animate;
+    }
+    fill();
+
+    function flash() { saved.textContent = 'Saved ✓'; setTimeout(() => (saved.textContent = ''), 1200); }
+    function update() {
+      s = { level: levelSel.value, color: colorSel.value, showHints: hints.checked, animate: animate.checked };
+      saveSettings(s); flash();
+    }
+    [levelSel, colorSel, hints, animate].forEach((el) => el.addEventListener('change', update));
+    document.getElementById('reset').addEventListener('click', () => {
+      localStorage.removeItem('othello-settings'); s = loadSettings(); fill(); flash();
+    });
+  </script>
+</body>
+</html>
