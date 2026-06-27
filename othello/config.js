@@ -14,6 +14,7 @@ const DEFAULTS = {
   level: 'medium',  // key into LEVELS
   showHints: true,
   animate: true,
+  soundEffects: true,
 };
 
 export function loadSettings() {

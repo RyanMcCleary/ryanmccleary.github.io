@@ -33,7 +33,14 @@
             <span>1</span><span>2</span><span>3</span><span>4</span>
             <span>5</span><span>6</span><span>7</span><span>8</span>
           </div>
-          <div id="board" role="grid" aria-label="Othello board"></div>
+          <p id="board-instructions" class="sr-only">
+            Othello board. Use the arrow keys to move between squares. Press
+            Enter or Space to play on a legal empty square. Each square tells
+            you whether it contains a black disc, a white disc, or is empty,
+            and whether an empty square is a legal move for you.
+          </p>
+          <div id="board" role="grid" aria-label="Othello board" aria-describedby="board-instructions" aria-rowcount="8" aria-colcount="8"></div>
+          <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
         </div>
       </div>
 

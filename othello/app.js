@@ -5,6 +5,7 @@ const engine = new OthelloEngine();
 
 // ---- DOM ----
 const boardEl = document.getElementById('board');
+const announcerEl = document.getElementById('sr-announcer');
 const statusEl = document.getElementById('status');
 const bannerEl = document.getElementById('banner');
 const blackNum = document.getElementById('black-num');
@@ -25,21 +26,114 @@ const colorSel = document.getElementById('color');
 const U64 = (bb) => BigInt.asUintN(64, bb);
 const bitAt = (bb, sq) => (U64(bb) >> BigInt(sq)) & 1n;
 const popcount = (bb) => { bb = U64(bb); let n = 0; while (bb) { bb &= bb - 1n; n++; } return n; };
-const sqName = (sq) => sq < 0 ? '–' : String.fromCharCode(97 + (sq % 8)) + (Math.floor(sq / 8) + 1);
+const sqName = (sq) => sq < 0 ? 'pass' : String.fromCharCode(97 + (sq % 8)) + (Math.floor(sq / 8) + 1);
+const spokenSqName = (sq) => sq < 0 ? 'pass' : `column ${String.fromCharCode(97 + (sq % 8))}, row ${Math.floor(sq / 8) + 1}`;
+const sideName = (blackToMove) => blackToMove ? 'Black' : 'White';
+const colorName = (color) => color === 'black' ? 'Black' : 'White';
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// ---- build cells once ----
+const PLACE_DURATION_MS = 180;
+const FLIP_DELAY_MS = 140;
+const FLIP_STAGGER_MS = 70;
+const FLIP_DURATION_MS = 260;
+const PLACE_SOUND_START_MS = 20;
+const PLACE_SOUND_DURATION_MS = 140;
+const PLACE_SOUND_GAIN = 0.5;
+const FLIP_SOUND_DURATION_MS = 95;
+const FLIP_SOUND_GAIN = 0.32;
+const SOUND_FINISH_PAD_MS = 80;
+
+const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+
+function animationsEnabled() {
+  return settings.animate && !reduceMotion?.matches;
+}
+
+function firstBit(bb) {
+  for (let sq = 0; sq < 64; sq++) {
+    if (bitAt(bb, sq)) return sq;
+  }
+  return -1;
+}
+
+function discAt(state, sq) {
+  if (bitAt(state.black, sq)) return 'black';
+  if (bitAt(state.white, sq)) return 'white';
+  return null;
+}
+
+function scoreText(black, white) {
+  return `Score: Black ${popcount(black)}, White ${popcount(white)}.`;
+}
+
+function applySettingsToBody() {
+  document.body.classList.toggle('no-anim', !animationsEnabled());
+}
+
+// ---- build accessible grid once ----
 const cells = [];
-for (let sq = 0; sq < 64; sq++) {
-  const cell = document.createElement('div');
-  cell.className = 'cell';
-  cell.setAttribute('role', 'button');
-  cell.tabIndex = -1;
-  cell.addEventListener('click', () => onCellClick(sq));
-  cell.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCellClick(sq); }
-  });
-  boardEl.appendChild(cell);
-  cells.push(cell);
+let focusedSq = 0;
+
+for (let row = 0; row < 8; row++) {
+  const rowEl = document.createElement('div');
+  rowEl.className = 'board-row';
+  rowEl.setAttribute('role', 'row');
+  rowEl.setAttribute('aria-rowindex', String(row + 1));
+
+  for (let col = 0; col < 8; col++) {
+    const sq = row * 8 + col;
+    const cell = document.createElement('div');
+    cell.id = `sq-${sqName(sq)}`;
+    cell.className = 'cell';
+    cell.setAttribute('role', 'gridcell');
+    cell.setAttribute('aria-rowindex', String(row + 1));
+    cell.setAttribute('aria-colindex', String(col + 1));
+    cell.tabIndex = sq === focusedSq ? 0 : -1;
+    cell.addEventListener('click', () => onCellClick(sq));
+    cell.addEventListener('keydown', (e) => onCellKeydown(e, sq));
+    rowEl.appendChild(cell);
+    cells.push(cell);
+  }
+
+  boardEl.appendChild(rowEl);
+}
+
+function updateTabStops() {
+  for (let sq = 0; sq < 64; sq++) {
+    cells[sq].tabIndex = sq === focusedSq ? 0 : -1;
+  }
+}
+
+function focusSquare(sq) {
+  focusedSq = Math.max(0, Math.min(63, sq));
+  updateTabStops();
+  cells[focusedSq]?.focus({ preventScroll: true });
+}
+
+function onCellKeydown(e, sq) {
+  const row = Math.floor(sq / 8);
+  const col = sq % 8;
+  let next = sq;
+
+  switch (e.key) {
+    case 'ArrowUp': next = row > 0 ? sq - 8 : sq; break;
+    case 'ArrowDown': next = row < 7 ? sq + 8 : sq; break;
+    case 'ArrowLeft': next = col > 0 ? sq - 1 : sq; break;
+    case 'ArrowRight': next = col < 7 ? sq + 1 : sq; break;
+    case 'Home': next = e.ctrlKey || e.metaKey ? 0 : row * 8; break;
+    case 'End': next = e.ctrlKey || e.metaKey ? 63 : row * 8 + 7; break;
+    case 'Enter':
+    case ' ':
+      e.preventDefault();
+      onCellClick(sq);
+      return;
+    default:
+      return;
+  }
+
+  e.preventDefault();
+  focusSquare(next);
 }
 
 // ---- game state ----
@@ -50,10 +144,12 @@ let cursor = 0;
 let busy = false;
 let gameOver = false;
 let gen = 0;        // bumps on New Game to cancel stale async work
+let currentLegalMoves = 0n;
 
 const cur = () => history[cursor];
 const atHead = () => cursor === history.length - 1;
-const isHumanTurn = () => cur().blackToMove === humanIsBlack;
+const isHumanTurn = () => history.length > 0 && cur().blackToMove === humanIsBlack;
+const canHumanMoveNow = () => history.length > 0 && !gameOver && !busy && atHead() && isHumanTurn();
 
 function pushPly(black, white, blackToMove, lastMove) {
   history = history.slice(0, cursor + 1);
@@ -63,17 +159,22 @@ function pushPly(black, white, blackToMove, lastMove) {
 
 async function newGame() {
   const myGen = ++gen;
-  busy = true; gameOver = false;
+  busy = true; gameOver = false; currentLegalMoves = 0n;
   settings = loadSettings();
+  applySettingsToBody();
   syncControls();
   humanIsBlack = resolveColor(settings.color) === 'black';
+  bannerEl.hidden = true;
+  setStatus('Loading engine...', true);
+
   const { black, white } = await engine.initial();
   if (myGen !== gen) return;
   history = [{ black, white, blackToMove: true, lastMove: -1 }];
   cursor = 0;
+  focusedSq = 0;
   busy = false;
-  bannerEl.hidden = true;
-  render();
+  render(0n);
+  announce(`New game. You are playing ${humanIsBlack ? 'Black' : 'White'}. Black moves first.`);
   tick();
 }
 
@@ -88,66 +189,96 @@ async function tick() {
     const oppMoves = await engine.legalMoves(s.black, s.white, !s.blackToMove);
     if (myGen !== gen) return;
     if (oppMoves === 0n) { endGame(); return; }
-    if (atHead()) {                         // forced pass — only advance live
-      setStatus(`${s.blackToMove ? 'Black' : 'White'} has no move — passing`);
+    if (atHead()) {                         // forced pass - only advance live
+      setStatus(`${sideName(s.blackToMove)} has no legal move; passing.`);
+      announce(`${sideName(s.blackToMove)} has no legal move and must pass.`);
       pushPly(s.black, s.white, !s.blackToMove, -1);
-      render();
+      render(0n);
       setTimeout(tick, 700);
     } else {
-      render();
-      setStatus('Reviewing — Redo to continue');
+      render(0n);
+      setStatus('Reviewing previous moves. Redo to continue.');
     }
     return;
   }
 
   if (isHumanTurn()) {
     render(myMoves);
-    setStatus('Your move');
+    setStatus(`Your move as ${sideName(s.blackToMove)}. ${plural(popcount(myMoves), 'legal move')}.`);
   } else if (atHead()) {
-    setStatus('Engine thinking…', true);
-    render();
     busy = true;
+    setStatus(`${sideName(s.blackToMove)} engine thinking...`, true);
+    render(0n);
     const sq = await engine.bestMove(s.black, s.white, s.blackToMove,
                                      { depth: 24, timeMs: levelMs(settings.level) });
-    busy = false;
     if (myGen !== gen) return;
-    if (sq < 0) { tick(); return; }
+    if (sq < 0) { busy = false; tick(); return; }
     const after = await engine.apply(s.black, s.white, s.blackToMove, sq);
     if (myGen !== gen) return;
+    const move = buildMove(s, after, sq, s.blackToMove);
     pushPly(after.black, after.white, !s.blackToMove, sq);
-    render();
+    render(0n, { move });
+    await playMoveFeedback(move, 'Engine', myGen);
+    if (myGen !== gen) return;
+    busy = false;
     tick();
   } else {
-    render();
-    setStatus('Reviewing — Redo to continue');
+    render(0n);
+    setStatus('Reviewing previous moves. Redo to continue.');
   }
 }
 
 async function onCellClick(sq) {
-  if (gameOver || busy) return;
+  focusedSq = sq;
+  updateTabStops();
+  if (document.activeElement !== cells[sq]) cells[sq].focus({ preventScroll: true });
+
+  if (gameOver || busy || !atHead() || !isHumanTurn()) {
+    announce(unavailableMessage(sq, currentLegalMoves), 'assertive');
+    return;
+  }
+
+  const myGen = gen;
   const s = cur();
-  if (s.blackToMove !== humanIsBlack) return;
   const moves = await engine.legalMoves(s.black, s.white, s.blackToMove);
-  if (!bitAt(moves, sq)) return;
+  if (myGen !== gen) return;
+  render(moves);
+
+  if (!bitAt(moves, sq)) {
+    announce(unavailableMessage(sq, moves), 'assertive');
+    return;
+  }
+
+  busy = true;
   const after = await engine.apply(s.black, s.white, s.blackToMove, sq);
+  if (myGen !== gen) return;
+  const move = buildMove(s, after, sq, s.blackToMove);
   pushPly(after.black, after.white, !s.blackToMove, sq);
-  render();
+  render(0n, { move });
+  await playMoveFeedback(move, 'You', myGen);
+  if (myGen !== gen) return;
+  busy = false;
   tick();
 }
 
 async function engineHint() {
   if (gameOver || busy || !isHumanTurn() || !atHead()) return;
-  const s = cur();
-  setStatus('Engine thinking…', true);
-  busy = true;
   const myGen = gen;
+  const s = cur();
+  setStatus('Finding a suggested move...', true);
+  busy = true;
+  render(0n);
   const sq = await engine.bestMove(s.black, s.white, s.blackToMove,
                                    { depth: 24, timeMs: levelMs(settings.level) });
-  busy = false;
   if (myGen !== gen || sq < 0) return;
   const after = await engine.apply(s.black, s.white, s.blackToMove, sq);
+  if (myGen !== gen) return;
+  const move = buildMove(s, after, sq, s.blackToMove);
   pushPly(after.black, after.white, !s.blackToMove, sq);
-  render();
+  render(0n, { move });
+  await playMoveFeedback(move, 'Suggested move', myGen);
+  if (myGen !== gen) return;
+  busy = false;
   tick();
 }
 
@@ -157,6 +288,7 @@ function undo() {
   do { i--; } while (i > 0 && history[i].blackToMove !== humanIsBlack);
   cursor = i;
   gameOver = false; bannerEl.hidden = true;
+  announce(`Moved back to move ${cursor}. ${sideName(cur().blackToMove)} to move.`);
   tick();
 }
 
@@ -165,31 +297,179 @@ function redo() {
   let i = cursor;
   do { i++; } while (i < history.length - 1 && history[i].blackToMove !== humanIsBlack);
   cursor = i;
+  announce(`Moved forward to move ${cursor}. ${sideName(cur().blackToMove)} to move.`);
   tick();
 }
 
+// ---- move animation and sound ----
+function buildMove(before, after, sq, blackToMove) {
+  const color = blackToMove ? 'black' : 'white';
+  const flipped = [];
+  const opponentBefore = blackToMove ? before.white : before.black;
+  const moverAfter = blackToMove ? after.black : after.white;
+
+  for (let i = 0; i < 64; i++) {
+    if (i !== sq && bitAt(opponentBefore, i) && bitAt(moverAfter, i)) flipped.push(i);
+  }
+
+  flipped.sort((a, b) => flipDistance(a, sq) - flipDistance(b, sq) || a - b);
+  return { sq, color, flips: flipped, black: after.black, white: after.white };
+}
+
+function flipDistance(a, b) {
+  return Math.max(Math.abs((a % 8) - (b % 8)), Math.abs(Math.floor(a / 8) - Math.floor(b / 8)));
+}
+
+function flipDelay(index) {
+  return FLIP_DELAY_MS + index * FLIP_STAGGER_MS;
+}
+
+function moveAnimationMs(move) {
+  if (!animationsEnabled()) return 0;
+  if (!move.flips.length) return PLACE_DURATION_MS + 80;
+  return flipDelay(move.flips.length - 1) + FLIP_DURATION_MS + 90;
+}
+
+async function playMoveFeedback(move, actor, expectedGen) {
+  const sound = await playMoveSounds(move);
+
+  if (move.flips.length) await sound.finished;
+  if (expectedGen !== gen) return;
+
+  announceMove(move, actor);
+  await delay(Math.max(0, moveAnimationMs(move) - (move.flips.length ? sound.durationMs : 0)));
+}
+
+let audioCtx = null;
+let audioWarningShown = false;
+
+function getAudioContext() {
+  if (!settings.soundEffects) return null;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return null;
+  audioCtx ||= new AudioContext();
+  return audioCtx;
+}
+
+function unlockAudio() {
+  const ctx = getAudioContext();
+  if (ctx?.state === 'suspended') void ctx.resume().catch(() => {});
+}
+
+async function playMoveSounds(move) {
+  if (!settings.soundEffects) return noMoveSound();
+  const ctx = getAudioContext();
+  if (!ctx) {
+    warnAudio('Othello sound effects are enabled, but Web Audio is unavailable in this browser.');
+    return noMoveSound();
+  }
+  try {
+    if (ctx.state === 'suspended') await ctx.resume();
+  } catch (err) {
+    warnAudio(`Othello sound effects could not start: ${err}`);
+    return noMoveSound();
+  }
+  if (ctx.state !== 'running') {
+    warnAudio(`Othello sound effects could not start; audio context is ${ctx.state}.`);
+    return noMoveSound();
+  }
+
+  scheduleTone(ctx, PLACE_SOUND_START_MS, move.color === 'black' ? 170 : 240,
+               PLACE_SOUND_DURATION_MS, PLACE_SOUND_GAIN, 'triangle');
+  move.flips.forEach((_, i) => {
+    const start = animationsEnabled() ? flipDelay(i) : 80 + i * 32;
+    scheduleTone(ctx, start, 420 + Math.min(i, 10) * 22,
+                 FLIP_SOUND_DURATION_MS, FLIP_SOUND_GAIN, 'triangle');
+  });
+
+  const durationMs = moveSoundDurationMs(move);
+  return { durationMs, finished: delay(durationMs) };
+}
+
+function moveSoundDurationMs(move) {
+  let end = PLACE_SOUND_START_MS + PLACE_SOUND_DURATION_MS;
+  if (move.flips.length) {
+    const lastFlipStart = animationsEnabled()
+      ? flipDelay(move.flips.length - 1)
+      : 80 + (move.flips.length - 1) * 32;
+    end = Math.max(end, lastFlipStart + FLIP_SOUND_DURATION_MS);
+  }
+  return end + SOUND_FINISH_PAD_MS;
+}
+
+function noMoveSound() {
+  return { durationMs: 0, finished: Promise.resolve(false) };
+}
+
+function warnAudio(message) {
+  if (audioWarningShown) return;
+  audioWarningShown = true;
+  console.warn(message);
+}
+
+function scheduleTone(ctx, startMs, frequency, durationMs, peakGain, type) {
+  const start = ctx.currentTime + startMs / 1000;
+  const end = start + durationMs / 1000;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = type;
+  osc.frequency.setValueAtTime(frequency, start);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(peakGain, start + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, end);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(start);
+  osc.stop(end + 0.02);
+}
+
+window.addEventListener('pointerdown', unlockAudio, { capture: true });
+window.addEventListener('keydown', unlockAudio, { capture: true });
+
 // ---- rendering ----
-function render(hints = 0n) {
+function render(legalMoves = 0n, { move = null } = {}) {
   const s = cur();
-  const showHints = settings.showHints && isHumanTurn() && !gameOver;
+  currentLegalMoves = U64(legalMoves);
+  const playableNow = canHumanMoveNow();
+  const showHints = settings.showHints && playableNow;
+  const animatedMove = animationsEnabled() ? move : null;
+  const flipped = new Map((animatedMove?.flips || []).map((sq, i) => [sq, i]));
+
+  if (!boardEl.contains(document.activeElement)) {
+    const firstLegal = playableNow ? firstBit(currentLegalMoves) : -1;
+    if (firstLegal >= 0) focusedSq = firstLegal;
+  }
+
   for (let sq = 0; sq < 64; sq++) {
     const cell = cells[sq];
+    const occupant = discAt(s, sq);
+    const canPlay = playableNow && !occupant && !!bitAt(currentLegalMoves, sq);
+
     cell.className = 'cell';
     cell.replaceChildren();
-    cell.tabIndex = -1;
-    let label = sqName(sq) + ', empty';
-    if (bitAt(s.black, sq)) {
-      const d = document.createElement('div'); d.className = 'disc black'; cell.append(d);
-      label = sqName(sq) + ', black';
-    } else if (bitAt(s.white, sq)) {
-      const d = document.createElement('div'); d.className = 'disc white'; cell.append(d);
-      label = sqName(sq) + ', white';
-    } else if (showHints && bitAt(hints, sq)) {
-      cell.classList.add('hint');
+    cell.removeAttribute('style');
+    cell.tabIndex = sq === focusedSq ? 0 : -1;
+    cell.setAttribute('aria-disabled', canPlay ? 'false' : 'true');
+    cell.setAttribute('aria-label', squareLabel(sq, currentLegalMoves));
+
+    if (occupant) {
+      const disc = document.createElement('div');
+      disc.className = `disc ${occupant}`;
+      disc.setAttribute('aria-hidden', 'true');
+      if (animatedMove?.sq === sq) disc.classList.add('placed');
+      if (flipped.has(sq)) {
+        disc.classList.add('flipped', `to-${occupant}`);
+        disc.style.setProperty('--flip-delay', `${flipDelay(flipped.get(sq))}ms`);
+      }
+      cell.append(disc);
+    } else if (canPlay) {
+      cell.classList.add('playable');
+      if (showHints) cell.classList.add('hint');
     }
-    if (showHints && bitAt(hints, sq)) { cell.classList.add('playable'); cell.tabIndex = 0; }
+
     if (sq === s.lastMove) cell.classList.add('last');
-    cell.setAttribute('aria-label', label);
   }
 
   const b = popcount(s.black), w = popcount(s.white);
@@ -204,15 +484,65 @@ function render(hints = 0n) {
   hintBtn.disabled = !(isHumanTurn() && atHead()) || gameOver || busy;
 }
 
+function squareLabel(sq, legalMoves) {
+  const s = cur();
+  const occupant = discAt(s, sq);
+  const coord = `${sqName(sq)}, ${spokenSqName(sq)}`;
+  const parts = [coord];
+
+  if (occupant) {
+    parts.push(`${colorName(occupant)} disc.`);
+  } else if (canHumanMoveNow()) {
+    parts.push(bitAt(legalMoves, sq)
+      ? `Empty. Legal move for ${sideName(s.blackToMove)}.`
+      : `Empty. Not a legal move for ${sideName(s.blackToMove)}.`);
+  } else if (gameOver) {
+    parts.push('Empty. The game is over.');
+  } else if (!atHead()) {
+    parts.push('Empty. You are reviewing previous moves, so this square is not playable.');
+  } else if (busy) {
+    parts.push('Empty. Not playable while the current move is in progress.');
+  } else if (!isHumanTurn()) {
+    parts.push(`Empty. You cannot move now; it is ${sideName(s.blackToMove)}'s turn.`);
+  } else {
+    parts.push('Empty. Not playable right now.');
+  }
+
+  if (sq === s.lastMove) parts.push('Last move.');
+  return parts.join(' ');
+}
+
+function unavailableMessage(sq, legalMoves) {
+  const s = cur();
+  const occupant = discAt(s, sq);
+
+  if (gameOver) return 'The game is over. Start a new game to play again.';
+  if (busy) return 'Please wait until the current move finishes.';
+  if (!atHead()) return 'You are reviewing previous moves. Use Redo to return to the live position before playing.';
+  if (!isHumanTurn()) return `It is ${sideName(s.blackToMove)}'s turn. Please wait for the engine.`;
+  if (occupant) return `${spokenSqName(sq)} already has a ${colorName(occupant)} disc.`;
+  if (!bitAt(legalMoves, sq)) return `${spokenSqName(sq)} is empty, but it is not a legal move for ${sideName(s.blackToMove)}.`;
+  return `${spokenSqName(sq)} is playable.`;
+}
+
 function renderMoves() {
   const list = document.createElement('ol');
   // history[0] is the start position; plies begin at index 1.
   for (let i = 1; i < history.length; i++) {
     const li = document.createElement('li');
-    const mover = history[i - 1].blackToMove ? 'B' : 'W';
-    const txt = history[i].lastMove < 0 ? 'pass' : sqName(history[i].lastMove);
-    li.innerHTML = `<span class="mv">${mover} ${txt}</span>`;
-    if (i === cursor) li.style.color = 'var(--accent)';
+    const moverIsBlack = history[i - 1].blackToMove;
+    const moveSq = history[i].lastMove;
+    const span = document.createElement('span');
+    span.className = 'mv';
+    span.textContent = `${moverIsBlack ? 'B' : 'W'} ${sqName(moveSq)}`;
+    li.setAttribute('aria-label', moveSq < 0
+      ? `${sideName(moverIsBlack)} passed`
+      : `${sideName(moverIsBlack)} played ${spokenSqName(moveSq)}`);
+    if (i === cursor) {
+      li.style.color = 'var(--accent)';
+      li.setAttribute('aria-current', 'step');
+    }
+    li.append(span);
     list.append(li);
   }
   movesEl.replaceChildren(list);
@@ -223,13 +553,29 @@ function endGame() {
   gameOver = true;
   const s = cur();
   const b = popcount(s.black), w = popcount(s.white);
-  render();
+  render(0n);
   const youWon = (humanIsBlack && b > w) || (!humanIsBlack && w > b);
   const who = b === w ? 'Draw' : b > w ? 'Black wins' : 'White wins';
-  const tag = b === w ? '' : (youWon ? ' — you win! 🎉' : ' — engine wins');
-  setStatus(`Game over`);
-  bannerEl.textContent = `${who} ${b}–${w}${tag}`;
+  const tag = b === w ? '' : (youWon ? ' - you win!' : ' - engine wins');
+  const message = `Game over. ${who}, ${b} to ${w}${tag}`;
+  setStatus('Game over');
+  bannerEl.textContent = message;
   bannerEl.hidden = false;
+  announce(message, 'assertive');
+}
+
+function announceMove(move, actor) {
+  const played = `${spokenSqName(move.sq)} as ${colorName(move.color)}`;
+  const prefix = actor === 'You'
+    ? `You played ${played}.`
+    : `${actor} played ${played}.`;
+  announce(`${prefix} Flipped ${plural(move.flips.length, 'disc')}. ${scoreText(move.black, move.white)}`);
+}
+
+function announce(text, politeness = 'polite') {
+  announcerEl.setAttribute('aria-live', politeness);
+  announcerEl.textContent = '';
+  setTimeout(() => { announcerEl.textContent = text; }, 20);
 }
 
 function setStatus(text, thinking = false) {
@@ -260,5 +606,5 @@ colorSel.addEventListener('change', () => {
   settings.color = colorSel.value; saveSettings(settings); newGame();
 });
 
-document.body.classList.toggle('no-anim', !settings.animate);
+applySettingsToBody();
 newGame();

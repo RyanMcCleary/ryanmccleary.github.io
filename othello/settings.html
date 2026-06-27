@@ -46,12 +46,16 @@
         <label for="set-animate">Animate disc placement</label>
         <input type="checkbox" id="set-animate">
       </div>
+      <div class="field">
+        <label for="set-sound">Sound effects</label>
+        <input type="checkbox" id="set-sound">
+      </div>
 
       <div class="btns" style="grid-template-columns:1fr 1fr;max-width:320px">
         <button id="reset">Reset defaults</button>
         <a href="index.html"><button class="primary" style="width:100%">Done</button></a>
       </div>
-      <p id="saved" class="who" style="color:var(--accent);min-height:1.2em"></p>
+      <p id="saved" class="who" style="color:var(--accent);min-height:1.2em" role="status" aria-live="polite"></p>
     </article>
   </main>
 
@@ -62,6 +66,7 @@
     const colorSel = document.getElementById('set-color');
     const hints = document.getElementById('set-hints');
     const animate = document.getElementById('set-animate');
+    const sound = document.getElementById('set-sound');
     const saved = document.getElementById('saved');
 
     for (const [key, v] of Object.entries(LEVELS)) {
@@ -74,15 +79,22 @@
       colorSel.value = s.color;
       hints.checked = s.showHints;
       animate.checked = s.animate;
+      sound.checked = s.soundEffects;
     }
     fill();
 
     function flash() { saved.textContent = 'Saved ✓'; setTimeout(() => (saved.textContent = ''), 1200); }
     function update() {
-      s = { level: levelSel.value, color: colorSel.value, showHints: hints.checked, animate: animate.checked };
+      s = {
+        level: levelSel.value,
+        color: colorSel.value,
+        showHints: hints.checked,
+        animate: animate.checked,
+        soundEffects: sound.checked,
+      };
       saveSettings(s); flash();
     }
-    [levelSel, colorSel, hints, animate].forEach((el) => el.addEventListener('change', update));
+    [levelSel, colorSel, hints, animate, sound].forEach((el) => el.addEventListener('change', update));
     document.getElementById('reset').addEventListener('click', () => {
       localStorage.removeItem('othello-settings'); s = loadSettings(); fill(); flash();
     });
