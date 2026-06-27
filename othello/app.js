@@ -34,15 +34,14 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const PLACE_DURATION_MS = 180;
-const FLIP_DELAY_MS = 140;
-const FLIP_STAGGER_MS = 70;
-const FLIP_DURATION_MS = 260;
-const PLACE_SOUND_START_MS = 20;
-const PLACE_SOUND_DURATION_MS = 140;
-const PLACE_SOUND_GAIN = 0.5;
-const FLIP_SOUND_DURATION_MS = 95;
-const FLIP_SOUND_GAIN = 0.32;
-const SOUND_FINISH_PAD_MS = 80;
+const FLIP_DELAY_MS = 220;
+const FLIP_STAGGER_MS = 420;
+const FLIP_DURATION_MS = 320;
+const TURN_SOUND_GAP_MS = 1000;
+const PLACE_SOUND_START_MS = 30;
+const BONGO_HIT_DURATION_MS = 240;
+const STEEL_HIT_DURATION_MS = 390;
+const SOUND_FINISH_PAD_MS = 120;
 
 const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
 
@@ -145,6 +144,7 @@ let busy = false;
 let gameOver = false;
 let gen = 0;        // bumps on New Game to cancel stale async work
 let currentLegalMoves = 0n;
+let pendingHumanMove = null;
 
 const cur = () => history[cursor];
 const atHead = () => cursor === history.length - 1;
@@ -160,6 +160,7 @@ function pushPly(black, white, blackToMove, lastMove) {
 async function newGame() {
   const myGen = ++gen;
   busy = true; gameOver = false; currentLegalMoves = 0n;
+  pendingHumanMove = null;
   settings = loadSettings();
   applySettingsToBody();
   syncControls();
@@ -175,10 +176,10 @@ async function newGame() {
   busy = false;
   render(0n);
   announce(`New game. You are playing ${humanIsBlack ? 'Black' : 'White'}. Black moves first.`);
-  tick();
+  tick({ quietStatus: true });
 }
 
-async function tick() {
+async function tick({ quietStatus = false } = {}) {
   const myGen = gen;
   if (gameOver) return;
   const s = cur();
@@ -190,11 +191,11 @@ async function tick() {
     if (myGen !== gen) return;
     if (oppMoves === 0n) { endGame(); return; }
     if (atHead()) {                         // forced pass - only advance live
-      setStatus(`${sideName(s.blackToMove)} has no legal move; passing.`);
-      announce(`${sideName(s.blackToMove)} has no legal move and must pass.`);
+      setStatus(`${sideName(s.blackToMove)} has no legal move; passing.`, false, !quietStatus);
+      announcePass(s.blackToMove);
       pushPly(s.black, s.white, !s.blackToMove, -1);
       render(0n);
-      setTimeout(tick, 700);
+      setTimeout(() => tick({ quietStatus: true }), 700);
     } else {
       render(0n);
       setStatus('Reviewing previous moves. Redo to continue.');
@@ -204,10 +205,10 @@ async function tick() {
 
   if (isHumanTurn()) {
     render(myMoves);
-    setStatus(`Your move as ${sideName(s.blackToMove)}. ${plural(popcount(myMoves), 'legal move')}.`);
+    setStatus(`Your move as ${sideName(s.blackToMove)}. ${plural(popcount(myMoves), 'legal move')}.`, false, !quietStatus);
   } else if (atHead()) {
     busy = true;
-    setStatus(`${sideName(s.blackToMove)} engine thinking...`, true);
+    setStatus(`${sideName(s.blackToMove)} engine thinking...`, true, !quietStatus);
     render(0n);
     const sq = await engine.bestMove(s.black, s.white, s.blackToMove,
                                      { depth: 24, timeMs: levelMs(settings.level) });
@@ -218,10 +219,11 @@ async function tick() {
     const move = buildMove(s, after, sq, s.blackToMove);
     pushPly(after.black, after.white, !s.blackToMove, sq);
     render(0n, { move });
-    await playMoveFeedback(move, 'Engine', myGen);
+    await playMoveSoundAndAnimation(move);
     if (myGen !== gen) return;
+    announceComputerMove(move);
     busy = false;
-    tick();
+    tick({ quietStatus: true });
   } else {
     render(0n);
     setStatus('Reviewing previous moves. Redo to continue.');
@@ -255,10 +257,13 @@ async function onCellClick(sq) {
   const move = buildMove(s, after, sq, s.blackToMove);
   pushPly(after.black, after.white, !s.blackToMove, sq);
   render(0n, { move });
-  await playMoveFeedback(move, 'You', myGen);
+  pendingHumanMove = { move, actor: 'You' };
+  await playMoveSoundAndAnimation(move);
+  if (myGen !== gen) return;
+  await delay(TURN_SOUND_GAP_MS);
   if (myGen !== gen) return;
   busy = false;
-  tick();
+  tick({ quietStatus: true });
 }
 
 async function engineHint() {
@@ -276,10 +281,13 @@ async function engineHint() {
   const move = buildMove(s, after, sq, s.blackToMove);
   pushPly(after.black, after.white, !s.blackToMove, sq);
   render(0n, { move });
-  await playMoveFeedback(move, 'Suggested move', myGen);
+  pendingHumanMove = { move, actor: 'Your suggested move' };
+  await playMoveSoundAndAnimation(move);
+  if (myGen !== gen) return;
+  await delay(TURN_SOUND_GAP_MS);
   if (myGen !== gen) return;
   busy = false;
-  tick();
+  tick({ quietStatus: true });
 }
 
 function undo() {
@@ -288,6 +296,7 @@ function undo() {
   do { i--; } while (i > 0 && history[i].blackToMove !== humanIsBlack);
   cursor = i;
   gameOver = false; bannerEl.hidden = true;
+  pendingHumanMove = null;
   announce(`Moved back to move ${cursor}. ${sideName(cur().blackToMove)} to move.`);
   tick();
 }
@@ -297,6 +306,7 @@ function redo() {
   let i = cursor;
   do { i++; } while (i < history.length - 1 && history[i].blackToMove !== humanIsBlack);
   cursor = i;
+  pendingHumanMove = null;
   announce(`Moved forward to move ${cursor}. ${sideName(cur().blackToMove)} to move.`);
   tick();
 }
@@ -330,18 +340,14 @@ function moveAnimationMs(move) {
   return flipDelay(move.flips.length - 1) + FLIP_DURATION_MS + 90;
 }
 
-async function playMoveFeedback(move, actor, expectedGen) {
+async function playMoveSoundAndAnimation(move) {
   const sound = await playMoveSounds(move);
-
-  if (move.flips.length) await sound.finished;
-  if (expectedGen !== gen) return;
-
-  announceMove(move, actor);
-  await delay(Math.max(0, moveAnimationMs(move) - (move.flips.length ? sound.durationMs : 0)));
+  await Promise.all([sound.finished, delay(moveAnimationMs(move))]);
 }
 
 let audioCtx = null;
 let audioWarningShown = false;
+let audioOutput = null;
 
 function getAudioContext() {
   if (!settings.soundEffects) return null;
@@ -374,12 +380,9 @@ async function playMoveSounds(move) {
     return noMoveSound();
   }
 
-  scheduleTone(ctx, PLACE_SOUND_START_MS, move.color === 'black' ? 170 : 240,
-               PLACE_SOUND_DURATION_MS, PLACE_SOUND_GAIN, 'triangle');
+  scheduleMoveHit(ctx, move, PLACE_SOUND_START_MS, -1, 'place');
   move.flips.forEach((_, i) => {
-    const start = animationsEnabled() ? flipDelay(i) : 80 + i * 32;
-    scheduleTone(ctx, start, 420 + Math.min(i, 10) * 22,
-                 FLIP_SOUND_DURATION_MS, FLIP_SOUND_GAIN, 'triangle');
+    scheduleMoveHit(ctx, move, flipSoundStart(i), i, 'flip');
   });
 
   const durationMs = moveSoundDurationMs(move);
@@ -387,14 +390,20 @@ async function playMoveSounds(move) {
 }
 
 function moveSoundDurationMs(move) {
-  let end = PLACE_SOUND_START_MS + PLACE_SOUND_DURATION_MS;
+  let end = PLACE_SOUND_START_MS + hitDurationMs(move.color);
   if (move.flips.length) {
-    const lastFlipStart = animationsEnabled()
-      ? flipDelay(move.flips.length - 1)
-      : 80 + (move.flips.length - 1) * 32;
-    end = Math.max(end, lastFlipStart + FLIP_SOUND_DURATION_MS);
+    const lastFlipStart = flipSoundStart(move.flips.length - 1);
+    end = Math.max(end, lastFlipStart + hitDurationMs(move.color));
   }
   return end + SOUND_FINISH_PAD_MS;
+}
+
+function hitDurationMs(color) {
+  return color === 'black' ? BONGO_HIT_DURATION_MS : STEEL_HIT_DURATION_MS;
+}
+
+function flipSoundStart(index) {
+  return FLIP_DELAY_MS + index * FLIP_STAGGER_MS;
 }
 
 function noMoveSound() {
@@ -407,22 +416,102 @@ function warnAudio(message) {
   console.warn(message);
 }
 
-function scheduleTone(ctx, startMs, frequency, durationMs, peakGain, type) {
+function scheduleMoveHit(ctx, move, startMs, flipIndex, kind) {
+  if (move.color === 'black') scheduleBongoHit(ctx, startMs, flipIndex, kind);
+  else scheduleSteelDrumHit(ctx, startMs, flipIndex, kind);
+}
+
+function getAudioOutput(ctx) {
+  if (audioOutput?.context === ctx) return audioOutput.input;
+
+  const input = ctx.createGain();
+  const compressor = ctx.createDynamicsCompressor();
+  input.gain.value = 1.8;
+  compressor.threshold.value = -12;
+  compressor.knee.value = 16;
+  compressor.ratio.value = 8;
+  compressor.attack.value = 0.003;
+  compressor.release.value = 0.18;
+  input.connect(compressor);
+  compressor.connect(ctx.destination);
+  audioOutput = { context: ctx, input };
+  return input;
+}
+
+function scheduleBongoHit(ctx, startMs, flipIndex, kind) {
   const start = ctx.currentTime + startMs / 1000;
-  const end = start + durationMs / 1000;
+  const end = start + BONGO_HIT_DURATION_MS / 1000;
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
+  const base = kind === 'place' ? 118 : 142 + (flipIndex % 4) * 12;
 
-  osc.type = type;
-  osc.frequency.setValueAtTime(frequency, start);
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(base * 2.1, start);
+  osc.frequency.exponentialRampToValueAtTime(base, start + 0.075);
   gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(peakGain, start + 0.012);
+  gain.gain.exponentialRampToValueAtTime(kind === 'place' ? 0.92 : 0.86, start + 0.007);
   gain.gain.exponentialRampToValueAtTime(0.0001, end);
 
   osc.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(getAudioOutput(ctx));
   osc.start(start);
   osc.stop(end + 0.02);
+
+  scheduleNoiseBurst(ctx, start, 38, 0.28, 620);
+}
+
+function scheduleNoiseBurst(ctx, start, durationMs, peakGain, cutoff) {
+  const frames = Math.max(1, Math.floor(ctx.sampleRate * durationMs / 1000));
+  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
+
+  const noise = ctx.createBufferSource();
+  const filter = ctx.createBiquadFilter();
+  const gain = ctx.createGain();
+  const end = start + durationMs / 1000;
+
+  noise.buffer = buffer;
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(cutoff, start);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(peakGain, start + 0.004);
+  gain.gain.exponentialRampToValueAtTime(0.0001, end);
+
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(getAudioOutput(ctx));
+  noise.start(start);
+  noise.stop(end + 0.01);
+}
+
+function scheduleSteelDrumHit(ctx, startMs, flipIndex, kind) {
+  const start = ctx.currentTime + startMs / 1000;
+  const end = start + STEEL_HIT_DURATION_MS / 1000;
+  const base = kind === 'place' ? 523.25 : 622.25 + (flipIndex % 5) * 44;
+  const partials = [
+    [1, 0.5],
+    [2.01, 0.24],
+    [2.98, 0.15],
+    [4.17, 0.09],
+  ];
+
+  for (const [ratio, peak] of partials) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(base * ratio, start);
+    osc.detune.setValueAtTime(kind === 'place' ? 0 : flipIndex * 2, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(peak, start + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, end);
+
+    osc.connect(gain);
+    gain.connect(getAudioOutput(ctx));
+    osc.start(start);
+    osc.stop(end + 0.03);
+  }
 }
 
 window.addEventListener('pointerdown', unlockAudio, { capture: true });
@@ -557,19 +646,54 @@ function endGame() {
   const youWon = (humanIsBlack && b > w) || (!humanIsBlack && w > b);
   const who = b === w ? 'Draw' : b > w ? 'Black wins' : 'White wins';
   const tag = b === w ? '' : (youWon ? ' - you win!' : ' - engine wins');
-  const message = `Game over. ${who}, ${b} to ${w}${tag}`;
-  setStatus('Game over');
+  const pending = takePendingHumanMove();
+  const prefix = pending ? `${moveSummary(pending.move, pending.actor)} ` : '';
+  const message = `${prefix}Game over. ${who}, ${b} to ${w}${tag}`;
+  setStatus('Game over', false, false);
   bannerEl.textContent = message;
   bannerEl.hidden = false;
   announce(message, 'assertive');
 }
 
 function announceMove(move, actor) {
-  const played = `${spokenSqName(move.sq)} as ${colorName(move.color)}`;
-  const prefix = actor === 'You'
-    ? `You played ${played}.`
-    : `${actor} played ${played}.`;
-  announce(`${prefix} Flipped ${plural(move.flips.length, 'disc')}. ${scoreText(move.black, move.white)}`);
+  announce(`${moveSummary(move, actor)} ${scoreText(move.black, move.white)}`);
+}
+
+function announceComputerMove(move) {
+  const pending = takePendingHumanMove();
+  if (pending) {
+    announce(`${moveSummary(pending.move, pending.actor)} Then ${moveSummary(move, 'The computer')} ${scoreText(move.black, move.white)}`);
+  } else {
+    announceMove(move, 'The computer');
+  }
+}
+
+function announcePass(blackToMove) {
+  const pending = takePendingHumanMove();
+  const passText = `${sideName(blackToMove)} had no legal move and passed.`;
+  if (pending) announce(`${moveSummary(pending.move, pending.actor)} ${passText} ${scoreText(pending.move.black, pending.move.white)}`);
+  else announce(passText);
+}
+
+function moveSummary(move, actor) {
+  const flippedColor = move.color === 'black' ? 'white' : 'black';
+  const flipped = move.flips.length
+    ? `flipping ${plural(move.flips.length, `${flippedColor} disc`)} on ${spokenSquareList(move.flips)}`
+    : 'flipping no discs';
+  return `${actor} placed a ${colorName(move.color)} disc on ${spokenSqName(move.sq)}, ${flipped}.`;
+}
+
+function spokenSquareList(squares) {
+  const names = squares.map(spokenSqName);
+  if (names.length <= 1) return names[0] || 'no squares';
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+}
+
+function takePendingHumanMove() {
+  const pending = pendingHumanMove;
+  pendingHumanMove = null;
+  return pending;
 }
 
 function announce(text, politeness = 'polite') {
@@ -578,7 +702,8 @@ function announce(text, politeness = 'polite') {
   setTimeout(() => { announcerEl.textContent = text; }, 20);
 }
 
-function setStatus(text, thinking = false) {
+function setStatus(text, thinking = false, live = true) {
+  statusEl.setAttribute('aria-live', live ? 'polite' : 'off');
   statusEl.textContent = text;
   statusEl.classList.toggle('thinking', thinking);
 }

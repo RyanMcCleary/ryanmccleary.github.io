@@ -90,8 +90,8 @@ main { max-width: 1040px; margin: 0 auto; padding: 22px 16px 48px; }
 .disc.black { background: var(--black-disc); }
 .disc.white { background: var(--white-disc); }
 .disc.placed { animation: drop .18s ease-out; }
-.disc.flipped.to-black { animation: flip-to-black .26s ease-in-out var(--flip-delay, 0ms) both; }
-.disc.flipped.to-white { animation: flip-to-white .26s ease-in-out var(--flip-delay, 0ms) both; }
+.disc.flipped.to-black { animation: flip-to-black .32s ease-in-out var(--flip-delay, 0ms) both; }
+.disc.flipped.to-white { animation: flip-to-white .32s ease-in-out var(--flip-delay, 0ms) both; }
 @keyframes drop { from { transform: scale(.2); opacity: .2; } to { transform: scale(1); opacity: 1; } }
 @keyframes flip-to-black {
   0% { transform: rotateY(0deg); background: var(--white-disc); }
