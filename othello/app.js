@@ -70,24 +70,23 @@ function applySettingsToBody() {
   document.body.classList.toggle('no-anim', !animationsEnabled());
 }
 
-// ---- build accessible grid once ----
+// ---- build accessible board once ----
 const cells = [];
 let focusedSq = 0;
+let deferFocusedCellAccessibility = false;
+
+const ARROW_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+const heldArrowKeys = new Set();
 
 for (let row = 0; row < 8; row++) {
   const rowEl = document.createElement('div');
   rowEl.className = 'board-row';
-  rowEl.setAttribute('role', 'row');
-  rowEl.setAttribute('aria-rowindex', String(row + 1));
 
   for (let col = 0; col < 8; col++) {
     const sq = row * 8 + col;
     const cell = document.createElement('div');
     cell.id = `sq-${sqName(sq)}`;
     cell.className = 'cell';
-    cell.setAttribute('role', 'gridcell');
-    cell.setAttribute('aria-rowindex', String(row + 1));
-    cell.setAttribute('aria-colindex', String(col + 1));
     cell.tabIndex = sq === focusedSq ? 0 : -1;
     cell.addEventListener('click', () => onCellClick(sq));
     cell.addEventListener('keydown', (e) => onCellKeydown(e, sq));
@@ -105,34 +104,132 @@ function updateTabStops() {
 }
 
 function focusSquare(sq) {
+  const previousSq = focusedSq;
   focusedSq = Math.max(0, Math.min(63, sq));
   updateTabStops();
   cells[focusedSq]?.focus({ preventScroll: true });
+  if (focusedSq !== previousSq) flushDeferredFocusedCellAccessibility(previousSq);
 }
 
 function onCellKeydown(e, sq) {
+  if (ARROW_KEYS.has(e.key)) {
+    e.preventDefault();
+    heldArrowKeys.add(e.key);
+    focusSquare(arrowTarget(focusedSq));
+    return;
+  }
+
   const row = Math.floor(sq / 8);
   const col = sq % 8;
   let next = sq;
 
   switch (e.key) {
-    case 'ArrowUp': next = row > 0 ? sq - 8 : sq; break;
-    case 'ArrowDown': next = row < 7 ? sq + 8 : sq; break;
-    case 'ArrowLeft': next = col > 0 ? sq - 1 : sq; break;
-    case 'ArrowRight': next = col < 7 ? sq + 1 : sq; break;
     case 'Home': next = e.ctrlKey || e.metaKey ? 0 : row * 8; break;
     case 'End': next = e.ctrlKey || e.metaKey ? 63 : row * 8 + 7; break;
     case 'Enter':
     case ' ':
       e.preventDefault();
-      onCellClick(sq);
+      onCellClick(focusedSq);
       return;
     default:
+      if (handleLegalMoveShortcut(e)) return;
       return;
   }
 
   e.preventDefault();
   focusSquare(next);
+}
+
+function arrowTarget(sq) {
+  const row = Math.floor(sq / 8);
+  const col = sq % 8;
+  const dRow = (heldArrowKeys.has('ArrowDown') ? 1 : 0) - (heldArrowKeys.has('ArrowUp') ? 1 : 0);
+  const dCol = (heldArrowKeys.has('ArrowRight') ? 1 : 0) - (heldArrowKeys.has('ArrowLeft') ? 1 : 0);
+  if (!dRow && !dCol) return sq;
+  const nextRow = Math.max(0, Math.min(7, row + dRow));
+  const nextCol = Math.max(0, Math.min(7, col + dCol));
+  return nextRow * 8 + nextCol;
+}
+
+function handleLegalMoveShortcut(e) {
+  if (e.altKey || e.ctrlKey || e.metaKey) return false;
+
+  const key = e.key.toLowerCase();
+  if (key === 'n' || key === ']') {
+    e.preventDefault();
+    focusLegalMove(1);
+    return true;
+  }
+  if (key === 'p' || key === '[') {
+    e.preventDefault();
+    focusLegalMove(-1);
+    return true;
+  }
+  return false;
+}
+
+function focusLegalMove(delta) {
+  const moves = legalMoveSquares();
+  if (!moves.length) {
+    announce('No legal moves are available right now.', 'assertive');
+    return;
+  }
+
+  const currentIndex = moves.indexOf(focusedSq);
+  if (currentIndex >= 0) {
+    focusSquare(moves[(currentIndex + delta + moves.length) % moves.length]);
+    return;
+  }
+
+  if (delta > 0) {
+    const nextIndex = moves.findIndex((moveSq) => moveSq > focusedSq);
+    focusSquare(moves[nextIndex >= 0 ? nextIndex : 0]);
+    return;
+  }
+
+  for (let i = moves.length - 1; i >= 0; i--) {
+    if (moves[i] < focusedSq) {
+      focusSquare(moves[i]);
+      return;
+    }
+  }
+  focusSquare(moves[moves.length - 1]);
+}
+
+function legalMoveSquares() {
+  const moves = [];
+  for (let sq = 0; sq < 64; sq++) {
+    if (bitAt(currentLegalMoves, sq)) moves.push(sq);
+  }
+  return moves;
+}
+
+function clearHeldArrowKeys() {
+  heldArrowKeys.clear();
+}
+
+function shouldPreserveFocusedCellAccessibility(sq, cell) {
+  return deferFocusedCellAccessibility && sq === focusedSq && document.activeElement === cell;
+}
+
+function deferFocusedCellAccessibilityUntilNavigation() {
+  if (boardEl.contains(document.activeElement)) deferFocusedCellAccessibility = true;
+}
+
+function flushDeferredFocusedCellAccessibility(sq = focusedSq) {
+  if (!deferFocusedCellAccessibility) return;
+  deferFocusedCellAccessibility = false;
+  setCellAccessibility(sq);
+}
+
+function setCellAccessibility(sq, legalMoves = currentLegalMoves) {
+  const cell = cells[sq];
+  if (!cell) return;
+  const s = cur();
+  const occupant = discAt(s, sq);
+  const canPlay = canHumanMoveNow() && !occupant && !!bitAt(legalMoves, sq);
+  cell.setAttribute('aria-disabled', canPlay ? 'false' : 'true');
+  cell.setAttribute('aria-label', squareLabel(sq, legalMoves));
 }
 
 // ---- game state ----
@@ -161,6 +258,8 @@ async function newGame() {
   const myGen = ++gen;
   busy = true; gameOver = false; currentLegalMoves = 0n;
   pendingHumanMove = null;
+  deferFocusedCellAccessibility = false;
+  clearHeldArrowKeys();
   settings = loadSettings();
   applySettingsToBody();
   syncControls();
@@ -231,9 +330,7 @@ async function tick({ quietStatus = false } = {}) {
 }
 
 async function onCellClick(sq) {
-  focusedSq = sq;
-  updateTabStops();
-  if (document.activeElement !== cells[sq]) cells[sq].focus({ preventScroll: true });
+  focusSquare(sq);
 
   if (gameOver || busy || !atHead() || !isHumanTurn()) {
     announce(unavailableMessage(sq, currentLegalMoves), 'assertive');
@@ -256,6 +353,7 @@ async function onCellClick(sq) {
   if (myGen !== gen) return;
   const move = buildMove(s, after, sq, s.blackToMove);
   pushPly(after.black, after.white, !s.blackToMove, sq);
+  deferFocusedCellAccessibilityUntilNavigation();
   render(0n, { move });
   pendingHumanMove = { move, actor: 'You' };
   await playMoveSoundAndAnimation(move);
@@ -540,8 +638,7 @@ function render(legalMoves = 0n, { move = null } = {}) {
     cell.replaceChildren();
     cell.removeAttribute('style');
     cell.tabIndex = sq === focusedSq ? 0 : -1;
-    cell.setAttribute('aria-disabled', canPlay ? 'false' : 'true');
-    cell.setAttribute('aria-label', squareLabel(sq, currentLegalMoves));
+    if (!shouldPreserveFocusedCellAccessibility(sq, cell)) setCellAccessibility(sq);
 
     if (occupant) {
       const disc = document.createElement('div');
@@ -577,7 +674,7 @@ function squareLabel(sq, legalMoves) {
   const s = cur();
   const occupant = discAt(s, sq);
   const coord = `${sqName(sq)}, ${spokenSqName(sq)}`;
-  const parts = [coord];
+  const parts = [];
 
   if (occupant) {
     parts.push(`${colorName(occupant)} disc.`);
@@ -598,6 +695,7 @@ function squareLabel(sq, legalMoves) {
   }
 
   if (sq === s.lastMove) parts.push('Last move.');
+  parts.push(coord);
   return parts.join(' ');
 }
 
@@ -720,6 +818,19 @@ function syncControls() {
 }
 
 // ---- wiring ----
+window.addEventListener('keyup', (e) => {
+  if (ARROW_KEYS.has(e.key)) heldArrowKeys.delete(e.key);
+}, { capture: true });
+window.addEventListener('blur', clearHeldArrowKeys);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearHeldArrowKeys();
+});
+boardEl.addEventListener('focusout', (e) => {
+  if (!e.relatedTarget || !boardEl.contains(e.relatedTarget)) {
+    clearHeldArrowKeys();
+    flushDeferredFocusedCellAccessibility();
+  }
+});
 newBtn.addEventListener('click', newGame);
 undoBtn.addEventListener('click', undo);
 redoBtn.addEventListener('click', redo);
