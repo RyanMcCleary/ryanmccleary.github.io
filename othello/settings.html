@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Othello — Settings</title>
-<link rel="icon" href="favicon.ico">
-<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="/othello/assets/favicon-BWXAriHn.ico">
+  <script type="module" crossorigin src="/othello/assets/settings-DAB3fU-W.js"></script>
+  <link rel="modulepreload" crossorigin href="/othello/assets/config-CyzAQnvf.js">
+  <link rel="stylesheet" crossorigin href="/othello/assets/styles-6mLDlEpn.css">
 </head>
 <body>
   <header class="site-header">
-    <img src="logo.png" alt="">
+    <img src="/othello/assets/logo-DcW5hfJY.png" alt="">
     <span class="brand">The Othello Corner</span>
     <nav aria-label="Main">
       <ul class="navbar">
@@ -59,45 +61,5 @@
     </article>
   </main>
 
-  <script type="module">
-    import { loadSettings, saveSettings, LEVELS } from './config.js';
-
-    const levelSel = document.getElementById('set-level');
-    const colorSel = document.getElementById('set-color');
-    const hints = document.getElementById('set-hints');
-    const animate = document.getElementById('set-animate');
-    const sound = document.getElementById('set-sound');
-    const saved = document.getElementById('saved');
-
-    for (const [key, v] of Object.entries(LEVELS)) {
-      levelSel.add(new Option(`${v.label} (${v.timeMs} ms)`, key));
-    }
-
-    let s = loadSettings();
-    function fill() {
-      levelSel.value = s.level;
-      colorSel.value = s.color;
-      hints.checked = s.showHints;
-      animate.checked = s.animate;
-      sound.checked = s.soundEffects;
-    }
-    fill();
-
-    function flash() { saved.textContent = 'Saved ✓'; setTimeout(() => (saved.textContent = ''), 1200); }
-    function update() {
-      s = {
-        level: levelSel.value,
-        color: colorSel.value,
-        showHints: hints.checked,
-        animate: animate.checked,
-        soundEffects: sound.checked,
-      };
-      saveSettings(s); flash();
-    }
-    [levelSel, colorSel, hints, animate, sound].forEach((el) => el.addEventListener('change', update));
-    document.getElementById('reset').addEventListener('click', () => {
-      localStorage.removeItem('othello-settings'); s = loadSettings(); fill(); flash();
-    });
-  </script>
 </body>
 </html>

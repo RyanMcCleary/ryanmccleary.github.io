@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Othello — Play</title>
-<link rel="icon" href="favicon.ico">
-<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="/othello/assets/favicon-BWXAriHn.ico">
+  <script type="module" crossorigin src="/othello/assets/index-CCQa-znv.js"></script>
+  <link rel="modulepreload" crossorigin href="/othello/assets/config-CyzAQnvf.js">
+  <link rel="stylesheet" crossorigin href="/othello/assets/styles-6mLDlEpn.css">
 </head>
 <body>
   <header class="site-header">
-    <img src="logo.png" alt="">
+    <img src="/othello/assets/logo-DcW5hfJY.png" alt="">
     <span class="brand">The Othello Corner</span>
     <nav aria-label="Main">
       <ul class="navbar">
@@ -37,10 +39,11 @@
             Othello board. Use the arrow keys to move one square. Hold two
             arrow keys together to move diagonally. Press N or right bracket
             for the next legal move, and P or left bracket for the previous
-            legal move. Press Enter or Space to play on a legal empty square.
-            Each square tells you whether it contains a black disc, a white
-            disc, or is empty, and whether an empty square is a legal move for
-            you.
+            legal move. Hold V and press an arrow key to view disks in that
+            direction; hold V and two arrow keys to view diagonally. Press F on
+            a legal move to hear flipped discs. Press Z to undo, and Y to redo.
+            Press Enter or Space to play on a legal empty square. Each square
+            says its coordinate, contents, and legal-move status.
           </p>
           <div id="board" role="application" aria-label="Othello board" aria-describedby="board-instructions"></div>
           <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
@@ -92,6 +95,5 @@
     </div>
   </main>
 
-  <script type="module" src="app.js"></script>
 </body>
 </html>
